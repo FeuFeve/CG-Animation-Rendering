@@ -32,11 +32,42 @@
 
 using namespace std;
 
+// -------------------------------------------
+// User input.
+// -------------------------------------------
+
+// Animation related
+float fps = 2.0f;
+
+// ICP related
+unsigned int maxTries = 10;
+unsigned int maxIterations = 100;
+float scoreThreshold = 99.0f;
+
+// -------------------------------------------
+// Global vars.
+// -------------------------------------------
+
 vector<Vec3> positions;
 vector<Vec3> normals;
 
 vector<Vec3> positions2;
 vector<Vec3> normals2;
+
+vector<Vec3> positions3;
+vector<Vec3> normals3;
+
+vector<Vec3> positions4;
+vector<Vec3> normals4;
+
+// Rendering
+bool showAnimation = true;
+bool showBaseModels = true;
+
+// Animation
+vector<int> nbFrames;
+vector<Vec3> translations;
+vector<Vec3> centroids;
 
 vector<vector<Vec3>> animPositions;
 vector<vector<Vec3>> animNormals;
@@ -45,15 +76,6 @@ unsigned int animId = 0;
 unsigned int lastAnimId = 1;
 int startTime;
 float lastTimeUpdate = 0;
-
-float fps = 30.0f;
-int nbFrames = 100;
-
-bool showAnimation = true;
-bool showBaseModels = true;
-
-// Vec3 p;
-// Mat3 rot;
 
 enum KernelType {
     KERNEL_CLASSIC,
@@ -136,26 +158,16 @@ void scaleAndCenter(vector<Vec3> &io_positions) {
     }
 }
 
-void applyRandomRigidTransformation(vector<Vec3> &io_positions, vector<Vec3> &io_normals) {
+Mat3 applyRandomRigidTransformation(vector<Vec3> &io_positions, vector<Vec3> &io_normals) {
     Mat3 R = Mat3::RandRotation();
-    Vec3 t = Vec3::Rand(1.f);
+    Vec3 t = Vec3::Rand(1.0f);
 
-    cout << "R:" << endl;
-    for (int i = 0; i < 3; i++) {
-        cout << "[ ";
-        for (int j = 0; j < 3; j++) {
-            cout << R(i, j) << " ";
-        }
-        cout << "]" << endl;
+    for (unsigned int i = 0; i < io_positions.size(); i++) {
+        io_positions[i] = R * io_positions[i] + t;
+        io_normals[i] = R * io_normals[i];
     }
-    cout << "t = (" << endl;
-    cout << t[0] << " " << t[1] << " " << t[2] << ")" << endl
-         << endl;
 
-    for (unsigned int pIt = 0; pIt < io_positions.size(); ++pIt) {
-        io_positions[pIt] = R * io_positions[pIt] + t;
-        io_normals[pIt] = R * io_normals[pIt];
-    }
+    return R;
 }
 
 void subsample(vector<Vec3> &i_positions, vector<Vec3> &i_normals, float minimumAmount = 0.1f, float maximumAmount = 0.2f) {
@@ -203,6 +215,17 @@ bool save(const string &filename, vector<Vec3> &vertices, vector<unsigned int> &
 // utils.
 // ------------------------------------------------------------------------------------------------------------
 
+void displayPoint(Vec3 v) {
+    cout << "Point: (" << v << ")" << endl;
+}
+
+void displayMatrix(Mat3 m) {
+    cout << "Rotation matrix is:" << endl;
+    cout << "{ " << m(0, 0) << " " << m(0, 1) << " " << m(0, 2) << " }" << endl;
+    cout << "{ " << m(1, 0) << " " << m(1, 1) << " " << m(1, 2) << " }" << endl;
+    cout << "{ " << m(2, 0) << " " << m(2, 1) << " " << m(2, 2) << " }" << endl;
+}
+
 float clamp(float x, float lowerlimit, float upperlimit) {
     if (x < lowerlimit)
         x = lowerlimit;
@@ -226,6 +249,23 @@ void updateAnimIndex() {
         animId++;
         if (animId == animPositions.size())
             animId = 0;
+
+        Mat3 r1 = Mat3(1, 1, 1, 0, 0, 0, 0, 0, 0);
+        r1.setRotation();
+        Mat3 r2 = r1 / 2.0f;
+        r2.setRotation();
+
+        cout << "#####" << endl;
+        displayMatrix(r1);
+        displayMatrix(r2);
+        cout << endl << endl;
+
+        for (unsigned int i = 0; i < positions3.size(); i++) {
+            positions3[i] = r1 * positions3[i];
+            normals3[i] = r1 * normals3[i];
+            positions4[i] = r2 * positions4[i];
+            normals4[i] = r2 * normals4[i];
+        }
     }
 }
 
@@ -350,6 +390,12 @@ void draw() {
 
         glColor3f(0.66, 0.82, 0.76);
         drawPointSet(positions2, normals2);
+
+        glColor3f(1, 0, 1);
+        drawPointSet(positions3, normals3);
+
+        glColor3f(0, 0, 1);
+        drawPointSet(positions4, normals4);
     }
 
     glColor3f(1.0, 0.41, 0.38);
@@ -536,23 +582,16 @@ void addAnimationFrame(vector<Vec3> const &Q, vector<Vec3> const &Qn, Vec3 const
 }
 
 void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs, vector<Vec3> const &nqs,
-         Mat3 &rotation, Vec3 &translation, unsigned int nbIterations) {
+         Mat3 &rotation, Vec3 &translation) {
     // TODO:
-    // Gérer l'INIT
     // Gérer les cas où P.size() != Q.size()
-    animPositions.clear();
-    animPositions.resize(nbIterations + 1);
-    animNormals.clear();
-    animNormals.resize(nbIterations + 1);
 
     // INIT
-
-    // ICP
-    float meanDistance;
-    Vec3 centroidP = Vec3(0, 0, 0), centroidQ = Vec3(0, 0, 0), tempPoint;
-    vector<Vec3> P, Q, Qn;
-    vector<unsigned int> correspondingIds;
+    float score = 0.0f;
+    Vec3 centroidP = Vec3(0, 0, 0);
     BasicANNkdTree qKdTree;
+    vector<unsigned int> correspondingIds;
+    vector<Vec3> P, Q, Qn;
 
     // Resize
     P.resize(ps.size());
@@ -571,59 +610,117 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
         Qn[i] = nqs[i];
     }
 
-    // Calculate the centroids of P and Q
-    for (unsigned int i = 0; i < P.size(); i++) {  // Centroid of P
+    // Calculate the centroids of P
+    for (unsigned int i = 0; i < P.size(); i++) {
         centroidP += P[i];
     }
     centroidP /= P.size();
-    for (unsigned int i = 0; i < Q.size(); i++) {  // Centroid of Q
-        centroidQ += Q[i];
-    }
-    centroidQ /= Q.size();
 
-    // Center P and Q around the origin (0,0,0) using their centroids
-    for (unsigned int i = 0; i < P.size(); i++) {  // Center P around the origin
+    // Center P around the origin (0,0,0) using its centroid
+    for (unsigned int i = 0; i < P.size(); i++) {
         P[i] -= centroidP;
     }
-    for (unsigned int i = 0; i < Q.size(); i++) {  // Center Q around the origin
-        Q[i] -= centroidQ;
+
+    // Do ICPs while currentTry < maxTries and score < scoreThreshold
+    for (unsigned int currentTry = 0; currentTry < maxTries; currentTry++) {
+        float lastIterationScore = 0;
+        float meanDistance;
+        Vec3 centroidQ = Vec3(0, 0, 0);
+        Mat3 currentIterationRotation;
+
+        // Calculate the centroids of Q
+        for (unsigned int i = 0; i < Q.size(); i++) {
+            centroidQ += Q[i];
+        }
+        centroidQ /= Q.size();
+
+        // Calculate the translation vector using the BASE P and Q centroids only
+        if (currentTry == 0)
+            translation = centroidP - centroidQ;
+
+        // Center Q around the origin (0,0,0) using its centroid
+        for (unsigned int i = 0; i < Q.size(); i++) {
+            Q[i] -= centroidQ;
+        }
+
+        cout << "### ICP " << (currentTry + 1) << "/" << maxTries << " ###" << endl;
+
+        // Begin iterations
+        unsigned int iteration = 0;
+        while (true) {
+            // Rebuild the kdTree
+            qKdTree.build(Q);
+
+            // For each point in P, find the closest point in Q. Q points can have 0, 1 or more associated P points
+            meanDistance = 0;
+            for (unsigned int i = 0; i < Q.size(); i++) {
+                correspondingIds[i] = qKdTree.nearest(P[i]);
+                meanDistance += (P[i] - Q[correspondingIds[i]]).length();
+            }
+            meanDistance /= P.size();
+            score = calculateScore(meanDistance);
+            cout << "ICP " << (currentTry + 1) << "/" << maxTries;
+            cout << ", iteration " << (iteration + 1) << "/" << maxIterations;
+            cout << ", score = " << score << "%" << endl;
+
+            if (score - lastIterationScore < 0.05f) {
+                cout << "Score is not increasing enough, stopping current ICP (FAILED)." << endl;
+                break;
+            }
+
+            // Calculate the matrix product
+            currentIterationRotation = Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
+            for (unsigned int i = 0; i < Q.size(); i++) {
+                currentIterationRotation += Mat3::tensor(P[i], Q[correspondingIds[i]]);
+            }
+            currentIterationRotation.setRotation();
+            (currentTry == 0 && iteration == 0) ? rotation = currentIterationRotation : rotation = currentIterationRotation * rotation;
+
+            // Apply the rotation to the points/normals
+            for (unsigned int i = 0; i < Q.size(); i++) {
+                Q[i] = currentIterationRotation * Q[i];
+                Qn[i] = currentIterationRotation * Qn[i];
+                Qn[i].normalize();
+            }
+
+            // Stop prematurely if score >= scoreThreshold
+            if (score > scoreThreshold) {
+                cout << "Score threshold reached (" << score << "% >= " << scoreThreshold << "%), stopping current ICP (SUCCESSED)." << endl;
+                break;
+            }
+
+            iteration++;
+            if (iteration >= maxIterations && score - lastIterationScore < (100 - lastIterationScore) / 50.0f) {
+                cout << "Iteration > maxIteration and bad score increase, stopping current ICP (FAILED)." << endl;
+                break;
+            }
+
+            lastIterationScore = score;
+        }
+
+        cout << endl
+             << endl;
+
+        // Stop prematurely if score >= scoreThreshold
+        if (score > scoreThreshold)
+            break;
+
+        // End of current ICP and scoreThreshold not reached: set a new random translation and rotation to Q and retry
+        rotation = applyRandomRigidTransformation(Q, Qn) * rotation;
     }
 
-    translation = centroidP - centroidQ;
+    cout << "End of ICP." << endl;
+    cout << "Translation vector is: (" << translation << ")" << endl;
+    cout << "Rotation matrix is:" << endl;
+    cout << "{ " << rotation(0, 0) << " " << rotation(0, 1) << " " << rotation(0, 2) << " }" << endl;
+    cout << "{ " << rotation(1, 0) << " " << rotation(1, 1) << " " << rotation(1, 2) << " }" << endl;
+    cout << "{ " << rotation(2, 0) << " " << rotation(2, 1) << " " << rotation(2, 2) << " }" << endl;
 
-    // Add the first animation frame (Q in initial position)
-    addAnimationFrame(Q, Qn, centroidQ, translation, 0, nbIterations);
-
-    // Begin iterations
-    for (unsigned int iteration = 0; iteration < nbIterations; iteration++) {
-        // Rebuild the kdTree
-        qKdTree.build(Q);
-
-        // For each point in P, find the closest point in Q. Q points can have 0, 1 or more associated P points
-        meanDistance = 0;
-        for (unsigned int i = 0; i < Q.size(); i++) {
-            correspondingIds[i] = qKdTree.nearest(P[i]);
-            meanDistance += (P[i] - Q[correspondingIds[i]]).length();
-        }
-        meanDistance /= P.size();
-        cout << "ICP iteration: " << (iteration + 1) << "/" << nbIterations << ", score = " << calculateScore(meanDistance) << "%" << endl;
-
-        // Calculate the matrix product
-        rotation = Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
-        for (unsigned int i = 0; i < Q.size(); i++) {
-            rotation += Mat3::tensor(P[i], Q[correspondingIds[i]]);
-        }
-        rotation.setRotation();
-
-        // Apply the rotation and trto the points
-        for (unsigned int i = 0; i < Q.size(); i++) {
-            Q[i] = rotation * Q[i];
-            Qn[i] = rotation * Qn[i];
-            Qn[i].normalize();
-        }
-
-        // Add the iteration results to the animPositions vector to display it
-        addAnimationFrame(Q, Qn, centroidQ, translation, iteration + 1, nbIterations);
+    positions4.resize(Q.size());
+    normals4.resize(Qn.size());
+    for (unsigned int i = 0; i < Q.size(); i++) {
+        positions4[i] = Q[i];
+        normals4[i] = Qn[i];
     }
 }
 
@@ -647,8 +744,8 @@ int main(int argc, char **argv) {
 
     {
         // Load a first pointset, and build a kd-tree:
-        loadPN("pointsets/igea_subsampled_extreme.pn", positions, normals);
-        loadPN("pointsets/igea_subsampled_extreme.pn", positions2, normals2);
+        loadPN("pointsets/african_statue_subsampled_extreme.pn", positions, normals);
+        loadPN("pointsets/african_statue_subsampled_extreme.pn", positions2, normals2);
 
         // Randomly move the two pointsets
         applyRandomRigidTransformation(positions, normals);
@@ -657,7 +754,22 @@ int main(int argc, char **argv) {
         // Apply an ICP on the models
         Mat3 resultingRotation;
         Vec3 resultingTranslation;
-        ICP(positions, normals, positions2, normals2, resultingRotation, resultingTranslation, nbFrames);
+        ICP(positions, normals, positions2, normals2, resultingRotation, resultingTranslation);
+
+        cout << "Translation vector is: (" << resultingTranslation << ")" << endl;
+        cout << "Rotation matrix is:" << endl;
+        cout << "{ " << resultingRotation(0, 0) << " " << resultingRotation(0, 1) << " " << resultingRotation(0, 2) << " }" << endl;
+        cout << "{ " << resultingRotation(1, 0) << " " << resultingRotation(1, 1) << " " << resultingRotation(1, 2) << " }" << endl;
+        cout << "{ " << resultingRotation(2, 0) << " " << resultingRotation(2, 1) << " " << resultingRotation(2, 2) << " }" << endl;
+
+        // Create a copy and rotate it
+        positions3.resize(positions2.size());
+        normals3.resize(normals2.size());
+        for (unsigned int i = 0; i < positions2.size(); i++) {
+            positions3[i] = resultingRotation * positions2[i];
+            normals3[i] = resultingRotation * normals2[i];
+            normals3[i].normalize();
+        }
 
         startTime = glutGet(GLUT_ELAPSED_TIME);
     }

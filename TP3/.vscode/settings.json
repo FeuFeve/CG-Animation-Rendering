@@ -5,6 +5,9 @@
         "limits": "cpp",
         "ostream": "cpp",
         "iostream": "cpp",
-        "iomanip": "cpp"
+        "iomanip": "cpp",
+        "*.tcc": "cpp",
+        "string": "cpp",
+        "string_view": "cpp"
     }
 }
