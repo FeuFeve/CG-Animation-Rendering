@@ -47,7 +47,7 @@ int startTime;
 float lastTimeUpdate = 0;
 
 float fps = 30.0f;
-int nbFrames = 100;
+int iterations = 100;
 
 bool showAnimation = true;
 bool showBaseModels = true;
@@ -601,7 +601,7 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
 
         // For each point in P, find the closest point in Q. Q points can have 0, 1 or more associated P points
         meanDistance = 0;
-        for (unsigned int i = 0; i < Q.size(); i++) {
+        for (unsigned int i = 0; i < P.size(); i++) {
             correspondingIds[i] = qKdTree.nearest(P[i]);
             meanDistance += (P[i] - Q[correspondingIds[i]]).length();
         }
@@ -610,7 +610,7 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
 
         // Calculate the matrix product
         rotation = Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
-        for (unsigned int i = 0; i < Q.size(); i++) {
+        for (unsigned int i = 0; i < P.size(); i++) {
             rotation += Mat3::tensor(P[i], Q[correspondingIds[i]]);
         }
         rotation.setRotation();
@@ -647,8 +647,8 @@ int main(int argc, char **argv) {
 
     {
         // Load a first pointset, and build a kd-tree:
-        loadPN("pointsets/igea_subsampled_extreme.pn", positions, normals);
-        loadPN("pointsets/igea_subsampled_extreme.pn", positions2, normals2);
+        loadPN("pointsets/african_statue_subsampled_extreme.pn", positions, normals);
+        loadPN("pointsets/african_statue_subsampled_extreme.pn", positions2, normals2);
 
         // Randomly move the two pointsets
         applyRandomRigidTransformation(positions, normals);
@@ -657,7 +657,7 @@ int main(int argc, char **argv) {
         // Apply an ICP on the models
         Mat3 resultingRotation;
         Vec3 resultingTranslation;
-        ICP(positions, normals, positions2, normals2, resultingRotation, resultingTranslation, nbFrames);
+        ICP(positions, normals, positions2, normals2, resultingRotation, resultingTranslation, iterations);
 
         startTime = glutGet(GLUT_ELAPSED_TIME);
     }

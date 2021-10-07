@@ -55,6 +55,10 @@ installdirs:
 clean:
 	rm -f  *~  $(CIBLE) $(OBJS)
 
+clean_opt:
+	rm tp
+	rm tp.o
+
 veryclean: clean
 	rm -f $(BINDIR)/$(CIBLE)
 
