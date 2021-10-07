@@ -38,6 +38,9 @@ vector<Vec3> normals;
 vector<Vec3> positions2;
 vector<Vec3> normals2;
 
+vector<Vec3> positions3;
+vector<Vec3> normals3;
+
 vector<vector<Vec3>> animPositions;
 vector<vector<Vec3>> animNormals;
 
@@ -50,7 +53,8 @@ float fps = 30.0f;
 int iterations = 100;
 
 bool showAnimation = true;
-bool showBaseModels = true;
+bool showBaseModel = true;
+bool showResultingModel = true;
 
 // Vec3 p;
 // Mat3 rot;
@@ -139,18 +143,6 @@ void scaleAndCenter(vector<Vec3> &io_positions) {
 void applyRandomRigidTransformation(vector<Vec3> &io_positions, vector<Vec3> &io_normals) {
     Mat3 R = Mat3::RandRotation();
     Vec3 t = Vec3::Rand(1.f);
-
-    cout << "R:" << endl;
-    for (int i = 0; i < 3; i++) {
-        cout << "[ ";
-        for (int j = 0; j < 3; j++) {
-            cout << R(i, j) << " ";
-        }
-        cout << "]" << endl;
-    }
-    cout << "t = (" << endl;
-    cout << t[0] << " " << t[1] << " " << t[2] << ")" << endl
-         << endl;
 
     for (unsigned int pIt = 0; pIt < io_positions.size(); ++pIt) {
         io_positions[pIt] = R * io_positions[pIt] + t;
@@ -331,8 +323,6 @@ void drawAnim() {
 
     if (lastAnimId != animId) {
         lastAnimId = animId;
-        // float step = animId / (animPositions.size() - 1.0f);
-        // cout << "Drawing id: " << animId << ", step = " << step << ", smoothStep = " << smoothstep(0, 1, step) << endl;
     }
 
     if (showAnimation)
@@ -342,14 +332,19 @@ void drawAnim() {
 void draw() {
     drawAxes();
 
-    glPointSize(2);  // for example...
+    glPointSize(2);
 
-    if (showBaseModels) {
-        glColor3f(0.8, 0.8, 1.0);
-        drawPointSet(positions, normals);
+    glColor3f(0.8, 0.8, 1.0);
+    drawPointSet(positions, normals);
 
-        glColor3f(0.66, 0.82, 0.76);
+    if (showBaseModel) {
+        glColor3f(0, 0, 1);
         drawPointSet(positions2, normals2);
+    }
+
+    if (showResultingModel) {
+        glColor3f(0, 1, 0);
+        drawPointSet(positions3, normals3);
     }
 
     glColor3f(1.0, 0.41, 0.38);
@@ -393,8 +388,11 @@ void key(unsigned char keyPressed, int x, int y) {
         case 'a':  // SHOW ANIMATION
             showAnimation = !showAnimation;
             break;
-        case 'b':  // SHOW MODEL
-            showBaseModels = !showBaseModels;
+        case 'b':  // SHOW BASE MODEL
+            showBaseModel = !showBaseModel;
+            break;
+        case 'r':  // SHOW RESULTING MODEL
+            showResultingModel = !showResultingModel;
             break;
 
         default:
@@ -524,8 +522,6 @@ void addAnimationFrame(vector<Vec3> const &Q, vector<Vec3> const &Qn, Vec3 const
 
     float smoothTranslationFactor = smoothstep(0, maxIterations, iteration);
     Vec3 frameTranslation = smoothTranslationFactor * translation;
-    // cout << "translation: " << translation << endl;
-    // cout << "frameTranslation: " << frameTranslation << endl;
 
     for (unsigned int i = 0; i < Q.size(); i++) {
         framePositions[i] = Q[i] + centroidQ + frameTranslation;
@@ -550,6 +546,7 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
     // ICP
     float meanDistance;
     Vec3 centroidP = Vec3(0, 0, 0), centroidQ = Vec3(0, 0, 0), tempPoint;
+    Mat3 iterationRotation = Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
     vector<Vec3> P, Q, Qn;
     vector<unsigned int> correspondingIds;
     BasicANNkdTree qKdTree;
@@ -609,22 +606,31 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
         cout << "ICP iteration: " << (iteration + 1) << "/" << nbIterations << ", score = " << calculateScore(meanDistance) << "%" << endl;
 
         // Calculate the matrix product
-        rotation = Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        iterationRotation = Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
         for (unsigned int i = 0; i < P.size(); i++) {
-            rotation += Mat3::tensor(P[i], Q[correspondingIds[i]]);
+            iterationRotation += Mat3::tensor(P[i], Q[correspondingIds[i]]);
         }
-        rotation.setRotation();
+        iterationRotation.setRotation();
+
+        iteration == 0 ? rotation = iterationRotation : rotation = iterationRotation * rotation;
 
         // Apply the rotation and trto the points
         for (unsigned int i = 0; i < Q.size(); i++) {
-            Q[i] = rotation * Q[i];
-            Qn[i] = rotation * Qn[i];
+            Q[i] = iterationRotation * Q[i];
+            Qn[i] = iterationRotation * Qn[i];
             Qn[i].normalize();
         }
 
         // Add the iteration results to the animPositions vector to display it
         addAnimationFrame(Q, Qn, centroidQ, translation, iteration + 1, nbIterations);
     }
+
+    cout << "End of ICP." << endl;
+    cout << "Translation vector is: (" << translation << ")" << endl;
+    cout << "Rotation matrix is:" << endl;
+    cout << "{ " << rotation(0, 0) << " " << rotation(0, 1) << " " << rotation(0, 2) << " }" << endl;
+    cout << "{ " << rotation(1, 0) << " " << rotation(1, 1) << " " << rotation(1, 2) << " }" << endl;
+    cout << "{ " << rotation(2, 0) << " " << rotation(2, 1) << " " << rotation(2, 2) << " }" << endl;
 }
 
 int main(int argc, char **argv) {
@@ -658,6 +664,29 @@ int main(int argc, char **argv) {
         Mat3 resultingRotation;
         Vec3 resultingTranslation;
         ICP(positions, normals, positions2, normals2, resultingRotation, resultingTranslation, iterations);
+
+        // ## TEST IF THE RESULTS ARE CORRECT ##
+
+        positions3.resize(positions2.size());
+        normals3.resize(normals2.size());
+        Vec3 pos3Centroid = Vec3(0, 0, 0);
+
+        // Copy
+        for (unsigned int i = 0; i < positions2.size(); i++) {
+            positions3[i] = positions2[i];
+            normals3[i] = normals2[i];
+            pos3Centroid += positions2[i];
+        }
+        pos3Centroid /= positions3.size();
+
+        // Center around 0, rotate, push back and translate
+        Vec3 translationFromOrigin = pos3Centroid + resultingTranslation;
+        for (unsigned int i = 0; i < positions2.size(); i++) {
+            positions3[i] = resultingRotation * (positions2[i] - pos3Centroid) + translationFromOrigin;
+            normals3[i] = resultingRotation * normals2[i];
+        }
+
+        // ## END OF TEST ##
 
         startTime = glutGet(GLUT_ELAPSED_TIME);
     }
