@@ -37,11 +37,11 @@ using namespace std;
 // -------------------------------------------
 
 // Animation related
-float fps = 2.0f;
+float fps = 30.0f;
 
 // ICP related
-unsigned int maxTries = 10;
-unsigned int maxIterations = 100;
+unsigned int maxTries = 5;
+unsigned int maxIterations = 50;
 float scoreThreshold = 99.0f;
 
 // -------------------------------------------
@@ -65,17 +65,20 @@ bool showAnimation = true;
 bool showBaseModels = true;
 
 // Animation
-vector<int> nbFrames;
-vector<Vec3> translations;
-vector<Vec3> centroids;
-
-vector<vector<Vec3>> animPositions;
-vector<vector<Vec3>> animNormals;
-
-unsigned int animId = 0;
-unsigned int lastAnimId = 1;
+unsigned int animIndex = 0, animCurrentFrame = 0;
 int startTime;
 float lastTimeUpdate = 0;
+
+vector<unsigned int> animNbFrames;  // 101, 101, 60
+vector<Vec3> animCentroids;         // centroid1, centroid2, centroid3
+
+vector<Vec3> animTranslations;             // P-Q1, P-Q2, P-Q3
+vector<vector<Mat3>> animRotationVectors;  // vector<Q1 rotations>, vector<Q2 rotations>, vector<Q3 rotations> = 101 + 101 + 59 = 261 rotations
+
+vector<Vec3> animStartPositions;
+vector<Vec3> animStartNormals;
+vector<Vec3> animPositions;
+vector<Vec3> animNormals;
 
 enum KernelType {
     KERNEL_CLASSIC,
@@ -241,30 +244,71 @@ float smoothstep(float edge0, float edge1, float x) {
     return x * x * (3 - 2 * x);
 }
 
-void updateAnimIndex() {
+void initAnim(vector<Vec3> const &animPos, vector<Vec3> const &animNorms) {
+    animStartPositions.clear();
+    animStartNormals.clear();
+    animStartPositions.resize(animPos.size());
+    animStartNormals.resize(animNorms.size());
+
+    for (unsigned int i = 0; i < animPos.size(); i++) {
+        animStartPositions[i] = animPos[i];
+        animStartNormals[i] = animNorms[i];
+    }
+
+    animPositions.clear();
+    animNormals.clear();
+    animPositions.resize(animStartPositions.size());
+    animNormals.resize(animStartNormals.size());
+
+    animNbFrames.clear();
+    animCentroids.clear();
+    animTranslations.clear();
+    animRotationVectors.clear();
+
+    animIndex = 0;
+    animCurrentFrame = 0;
+}
+
+void addToAnim(int nbFrames, Vec3 centroid, Vec3 animTranslation, vector<Mat3> animRotations) {
+    animNbFrames.push_back(nbFrames);
+    animCentroids.push_back(centroid);
+    animTranslations.push_back(animTranslation);
+    animRotationVectors.push_back(animRotations);
+}
+
+void updateAnim() {
     int deltaTime = glutGet(GLUT_ELAPSED_TIME) - startTime - lastTimeUpdate;
     float fpsDeltaTime = 1000 / fps;
     if (deltaTime > fpsDeltaTime) {
         lastTimeUpdate += fpsDeltaTime;
-        animId++;
-        if (animId == animPositions.size())
-            animId = 0;
 
-        Mat3 r1 = Mat3(1, 1, 1, 0, 0, 0, 0, 0, 0);
-        r1.setRotation();
-        Mat3 r2 = r1 / 2.0f;
-        r2.setRotation();
+        if (animCurrentFrame == 0) {
+            if (animIndex == 0) {
+                for (unsigned int i = 0; i < animPositions.size(); i++) {
+                    animPositions[i] = animStartPositions[i] + animCentroids[animIndex];
+                    animNormals[i] = animStartNormals[i];
+                }
+            } else {
+                for (unsigned int i = 0; i < animPositions.size(); i++) {
+                    animPositions[i] += animCentroids[animIndex];
+                }
+            }
+        }
 
-        cout << "#####" << endl;
-        displayMatrix(r1);
-        displayMatrix(r2);
-        cout << endl << endl;
+        float smoothTranslationFactor = smoothstep(0, animNbFrames[animIndex], animCurrentFrame);
+        Vec3 frameTranslation = smoothTranslationFactor * animTranslations[animIndex];
+        for (unsigned int i = 0; i < animPositions.size(); i++) {
+            animPositions[i] = animRotationVectors[animIndex][animCurrentFrame] * animPositions[i] + frameTranslation;
+            animNormals[i] = animRotationVectors[animIndex][animCurrentFrame] * animNormals[i];
+            animNormals[i].normalize();
+        }
 
-        for (unsigned int i = 0; i < positions3.size(); i++) {
-            positions3[i] = r1 * positions3[i];
-            normals3[i] = r1 * normals3[i];
-            positions4[i] = r2 * positions4[i];
-            normals4[i] = r2 * normals4[i];
+        animCurrentFrame++;
+        if (animCurrentFrame == animNbFrames[animIndex]) {
+            animCurrentFrame = 0;
+            animIndex++;
+            if (animIndex == animNbFrames.size())
+                animIndex = 0;
         }
     }
 }
@@ -365,18 +409,12 @@ void drawAxes() {
 }
 
 void drawAnim() {
-    updateAnimIndex();
+    updateAnim();
     if (animPositions.size() == 0)
         return;
 
-    if (lastAnimId != animId) {
-        lastAnimId = animId;
-        // float step = animId / (animPositions.size() - 1.0f);
-        // cout << "Drawing id: " << animId << ", step = " << step << ", smoothStep = " << smoothstep(0, 1, step) << endl;
-    }
-
     if (showAnimation)
-        drawPointSet(animPositions[animId], animNormals[animId]);
+        drawPointSet(animPositions, animNormals);
 }
 
 void draw() {
@@ -563,23 +601,23 @@ void HPSS(Vec3 inputPoint, Vec3 &outputPoint, Vec3 &outputNormal, vector<Vec3> c
 // Added in TP3
 // ------------------------------------------------------------------------------------------------------------
 
-void addAnimationFrame(vector<Vec3> const &Q, vector<Vec3> const &Qn, Vec3 const &centroidQ, Vec3 const &translation,
-                       unsigned const int iteration, unsigned const int maxIterations) {
-    vector<Vec3> framePositions;
-    framePositions.resize(Q.size());
+// void addAnimationFrame(vector<Vec3> const &Q, vector<Vec3> const &Qn, Vec3 const &centroidQ, Vec3 const &translation,
+//                        unsigned const int iteration, unsigned const int maxIterations) {
+//     vector<Vec3> framePositions;
+//     framePositions.resize(Q.size());
 
-    float smoothTranslationFactor = smoothstep(0, maxIterations, iteration);
-    Vec3 frameTranslation = smoothTranslationFactor * translation;
-    // cout << "translation: " << translation << endl;
-    // cout << "frameTranslation: " << frameTranslation << endl;
+//     float smoothTranslationFactor = smoothstep(0, maxIterations, iteration);
+//     Vec3 frameTranslation = smoothTranslationFactor * translation;
+//     // cout << "translation: " << translation << endl;
+//     // cout << "frameTranslation: " << frameTranslation << endl;
 
-    for (unsigned int i = 0; i < Q.size(); i++) {
-        framePositions[i] = Q[i] + centroidQ + frameTranslation;
-    }
+//     for (unsigned int i = 0; i < Q.size(); i++) {
+//         framePositions[i] = Q[i] + centroidQ + frameTranslation;
+//     }
 
-    animPositions[iteration] = framePositions;
-    animNormals[iteration] = Qn;
-}
+//     animPositions[iteration] = framePositions;
+//     animNormals[iteration] = Qn;
+// }
 
 void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs, vector<Vec3> const &nqs,
          Mat3 &rotation, Vec3 &translation) {
@@ -588,7 +626,7 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
 
     // INIT
     float score = 0.0f;
-    Vec3 centroidP = Vec3(0, 0, 0);
+    Vec3 centroidP = Vec3(0, 0, 0), translationQ;
     BasicANNkdTree qKdTree;
     vector<unsigned int> correspondingIds;
     vector<Vec3> P, Q, Qn;
@@ -621,12 +659,16 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
         P[i] -= centroidP;
     }
 
+    // Initialize the animation
+    initAnim(Q, Qn);
+
     // Do ICPs while currentTry < maxTries and score < scoreThreshold
     for (unsigned int currentTry = 0; currentTry < maxTries; currentTry++) {
         float lastIterationScore = 0;
         float meanDistance;
         Vec3 centroidQ = Vec3(0, 0, 0);
         Mat3 currentIterationRotation;
+        vector<Mat3> icpRotations;
 
         // Calculate the centroids of Q
         for (unsigned int i = 0; i < Q.size(); i++) {
@@ -635,8 +677,9 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
         centroidQ /= Q.size();
 
         // Calculate the translation vector using the BASE P and Q centroids only
+        translationQ = centroidP - centroidQ;
         if (currentTry == 0)
-            translation = centroidP - centroidQ;
+            translation = translationQ;
 
         // Center Q around the origin (0,0,0) using its centroid
         for (unsigned int i = 0; i < Q.size(); i++) {
@@ -675,6 +718,7 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
             }
             currentIterationRotation.setRotation();
             (currentTry == 0 && iteration == 0) ? rotation = currentIterationRotation : rotation = currentIterationRotation * rotation;
+            icpRotations.push_back(currentIterationRotation);
 
             // Apply the rotation to the points/normals
             for (unsigned int i = 0; i < Q.size(); i++) {
@@ -701,6 +745,8 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
         cout << endl
              << endl;
 
+        addToAnim(iteration + 2, centroidQ, translationQ, icpRotations);
+
         // Stop prematurely if score >= scoreThreshold
         if (score > scoreThreshold)
             break;
@@ -715,13 +761,6 @@ void ICP(vector<Vec3> const &ps, vector<Vec3> const &nps, vector<Vec3> const &qs
     cout << "{ " << rotation(0, 0) << " " << rotation(0, 1) << " " << rotation(0, 2) << " }" << endl;
     cout << "{ " << rotation(1, 0) << " " << rotation(1, 1) << " " << rotation(1, 2) << " }" << endl;
     cout << "{ " << rotation(2, 0) << " " << rotation(2, 1) << " " << rotation(2, 2) << " }" << endl;
-
-    positions4.resize(Q.size());
-    normals4.resize(Qn.size());
-    for (unsigned int i = 0; i < Q.size(); i++) {
-        positions4[i] = Q[i];
-        normals4[i] = Qn[i];
-    }
 }
 
 int main(int argc, char **argv) {
@@ -756,22 +795,29 @@ int main(int argc, char **argv) {
         Vec3 resultingTranslation;
         ICP(positions, normals, positions2, normals2, resultingRotation, resultingTranslation);
 
-        cout << "Translation vector is: (" << resultingTranslation << ")" << endl;
-        cout << "Rotation matrix is:" << endl;
-        cout << "{ " << resultingRotation(0, 0) << " " << resultingRotation(0, 1) << " " << resultingRotation(0, 2) << " }" << endl;
-        cout << "{ " << resultingRotation(1, 0) << " " << resultingRotation(1, 1) << " " << resultingRotation(1, 2) << " }" << endl;
-        cout << "{ " << resultingRotation(2, 0) << " " << resultingRotation(2, 1) << " " << resultingRotation(2, 2) << " }" << endl;
-
-        // Create a copy and rotate it
-        positions3.resize(positions2.size());
-        normals3.resize(normals2.size());
-        for (unsigned int i = 0; i < positions2.size(); i++) {
-            positions3[i] = resultingRotation * positions2[i];
-            normals3[i] = resultingRotation * normals2[i];
-            normals3[i].normalize();
-        }
-
         startTime = glutGet(GLUT_ELAPSED_TIME);
+
+        cout << "NbFrames:";
+        for (unsigned int i = 0; i < animNbFrames.size(); i++) {
+            cout << " " << animNbFrames[i];
+        }
+        cout << endl;
+        cout << "Centroids:";
+        for (unsigned int i = 0; i < animCentroids.size(); i++) {
+            cout << " " << animCentroids[i];
+        }
+        cout << endl;
+        cout << "Translations:";
+        for (unsigned int i = 0; i < animTranslations.size(); i++) {
+            cout << " " << animTranslations[i];
+        }
+        cout << endl;
+        cout << animRotationVectors.size();
+        cout << "Rotation vector sizes:";
+        for (unsigned int i = 0; i < animRotationVectors.size(); i++) {
+            cout << " " << animRotationVectors[i].size();
+        }
+        cout << endl;
     }
 
     glutMainLoop();
