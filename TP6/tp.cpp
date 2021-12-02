@@ -93,10 +93,16 @@ struct Mesh {
 };
 
 Mesh mesh;
+Mesh displayMesh;
+
+uint minRes = 2;
+uint maxRes = 256;
+uint currentRes = 32;
 
 bool display_normals;
 bool display_smooth_normals;
 bool display_mesh;
+bool display_simplified_mesh;
 
 // -------------------------------------------
 // OpenGL/GLUT application code.
@@ -217,8 +223,10 @@ void computeBBox(vector<Vec3> const& i_positions, Vec3& bboxMin, Vec3& bboxMax) 
             bboxMax[coord] = max<float>(bboxMax[coord], i_positions[pIt][coord]);
         }
     }
-    bboxMin -= Vec3(0.1, 0.1, 0.1);
-    bboxMax += Vec3(0.1, 0.1, 0.1);
+
+    float epsilon = 0.001;
+    bboxMin -= Vec3(epsilon, epsilon, epsilon);
+    bboxMax += Vec3(epsilon, epsilon, epsilon);
 }
 
 // ------------------------------------
@@ -253,6 +261,7 @@ void init() {
     display_normals = false;
     display_mesh = true;
     display_smooth_normals = true;
+    display_simplified_mesh = false;
 }
 
 // ------------------------------------
@@ -347,11 +356,15 @@ void drawNormals(Mesh const& i_mesh) {
 //Draw fonction
 void draw() {
     glColor3f(0.8, 1, 0.8);
-    drawMesh(mesh);
+
+    if (display_simplified_mesh)
+        drawMesh(displayMesh);
+    else
+        drawMesh(mesh);
 
     if (display_normals) {
         glColor3f(1., 0., 0.);
-        drawNormals(mesh);
+        drawNormals(displayMesh);
     }
 }
 
@@ -374,10 +387,34 @@ void idle() {
 
 // Compute simplified mesh
 void simplify(uint resolution) {
+    cout << "Current resolution: " << resolution << endl;
+
+    displayMesh = mesh;
+
     Vec3 bboxMin, bboxMax;
     computeBBox(mesh.vertices, bboxMin, bboxMax);
 
-    cout << "Found bbox: from 1 to 2" << endl;
+    cout << "Found bbox: from (" << bboxMin << ") to (" << bboxMax << ")" << endl;
+
+    float xLength = bboxMax[0] - bboxMin[0];
+    float yLength = bboxMax[1] - bboxMin[1];
+    float zLength = bboxMax[2] - bboxMin[2];
+    
+    vector<vector<vector<vector<Vec3>>>> grid(resolution, vector<vector<vector<Vec3>>>(resolution, vector<vector<Vec3>>(resolution)));
+    vector<vector<uint>> gridId;
+    
+    for (auto &vertex : mesh.vertices) {
+        float xRatio = (vertex[0] - bboxMin[0]) / xLength;
+        float yRatio = (vertex[1] - bboxMin[1]) / yLength;
+        float zRatio = (vertex[2] - bboxMin[2]) / zLength;
+
+        uint xIndex = xRatio * resolution;
+        uint yIndex = yRatio * resolution;
+        uint zIndex = zRatio * resolution;
+        
+        grid[xIndex][yIndex][zIndex].push_back(vertex);
+        // gridId.push_back({xIndex, yIndex, zIndex});
+    }
 }
 
 // ------------------------------------
@@ -413,8 +450,20 @@ void key(unsigned char keyPressed, int x, int y) {
             display_smooth_normals = !display_smooth_normals;
             break;
 
-        case '&':
-            simplify(32);
+        case 'x':
+            display_simplified_mesh = !display_simplified_mesh;
+            break;
+
+        case '+':
+            display_simplified_mesh = true;
+            if (currentRes < maxRes) currentRes *= 2;
+            simplify(currentRes);
+            break;
+
+        case '-':
+            display_simplified_mesh = true;
+            if (currentRes > minRes) currentRes /= 2;
+            simplify(currentRes);
             break;
 
         default:
@@ -496,6 +545,7 @@ int main(int argc, char** argv) {
     openOFF("data/elephant.off", mesh.vertices, mesh.normals, mesh.triangles);
 
     mesh.computeNormals();
+    displayMesh = mesh;
 
     glutMainLoop();
     return EXIT_SUCCESS;
