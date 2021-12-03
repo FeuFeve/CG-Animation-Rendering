@@ -24,6 +24,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <ctime>
 
 #include "src/Camera.h"
 #include "src/Vec3.h"
@@ -91,6 +92,9 @@ struct Mesh {
         computeVerticesNormals();
     }
 };
+
+int fps = 0;
+int lastUpdateTime = -1;
 
 Mesh mesh;
 Mesh displayMesh;
@@ -355,6 +359,16 @@ void drawNormals(Mesh const& i_mesh) {
 
 //Draw fonction
 void draw() {
+    // FPS
+    fps++;
+    time_t now = time(nullptr);
+    if (now != lastUpdateTime) {
+        cout << "FPS: " << fps << endl;
+        fps = 0;
+        lastUpdateTime++;
+    }
+    
+    // Actual draw call
     glColor3f(0.8, 1, 0.8);
 
     if (display_simplified_mesh) {
@@ -481,6 +495,10 @@ void simplify(uint resolution) {
     cout << "Vertices: " << displayMesh.vertices.size() << "/" << mesh.vertices.size() << endl;
     cout << "Normals: " << displayMesh.normals.size() << "/" << mesh.normals.size() << endl;
     cout << "Triangles: " << displayMesh.triangles.size() << "/" << mesh.triangles.size() << endl;
+
+    // for (auto &triangle : displayMesh.triangles) {
+    //     cout << triangle.v[0] << " " << triangle.v[1] << " " <<  triangle.v[2] << endl;
+    // }
 }
 
 // ------------------------------------
@@ -612,6 +630,8 @@ int main(int argc, char** argv) {
 
     mesh.computeNormals();
     displayMesh = mesh;
+
+    lastUpdateTime = time(nullptr);
 
     glutMainLoop();
     return EXIT_SUCCESS;
