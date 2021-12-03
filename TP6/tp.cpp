@@ -109,8 +109,8 @@ bool display_simplified_mesh;
 // -------------------------------------------
 
 static GLint window;
-static unsigned int SCREENWIDTH = 800;
-static unsigned int SCREENHEIGHT = 450;
+static unsigned int SCREENWIDTH = 1200;
+static unsigned int SCREENHEIGHT = 675;
 static Camera camera;
 static bool mouseRotatePressed = false;
 static bool mouseMovePressed = false;
@@ -357,14 +357,18 @@ void drawNormals(Mesh const& i_mesh) {
 void draw() {
     glColor3f(0.8, 1, 0.8);
 
-    if (display_simplified_mesh)
+    if (display_simplified_mesh) {
         drawMesh(displayMesh);
+    }
     else
         drawMesh(mesh);
 
     if (display_normals) {
         glColor3f(1., 0., 0.);
-        drawNormals(displayMesh);
+        if (display_simplified_mesh)
+            drawNormals(displayMesh);
+        else
+            drawNormals(mesh);
     }
 }
 
@@ -387,22 +391,22 @@ void idle() {
 
 // Compute simplified mesh
 void simplify(uint resolution) {
-    cout << "Current resolution: " << resolution << endl;
+    cout << "\nCurrent resolution: " << resolution << endl;
 
     displayMesh = mesh;
 
     Vec3 bboxMin, bboxMax;
     computeBBox(mesh.vertices, bboxMin, bboxMax);
 
-    cout << "Found bbox: from (" << bboxMin << ") to (" << bboxMax << ")" << endl;
-
     float xLength = bboxMax[0] - bboxMin[0];
     float yLength = bboxMax[1] - bboxMin[1];
     float zLength = bboxMax[2] - bboxMin[2];
     
-    vector<vector<vector<vector<Vec3>>>> grid(resolution, vector<vector<vector<Vec3>>>(resolution, vector<vector<Vec3>>(resolution)));
-    vector<vector<uint>> gridId;
+    vector<vector<vector<vector<Vec3>>>> chunks(resolution, vector<vector<vector<Vec3>>>(resolution, vector<vector<Vec3>>(resolution)));
+    vector<vector<uint>> chunksId;
     
+    // Put each vertex in its according chunk
+    // Chunks can store multiple vertices
     for (auto &vertex : mesh.vertices) {
         float xRatio = (vertex[0] - bboxMin[0]) / xLength;
         float yRatio = (vertex[1] - bboxMin[1]) / yLength;
@@ -412,9 +416,71 @@ void simplify(uint resolution) {
         uint yIndex = yRatio * resolution;
         uint zIndex = zRatio * resolution;
         
-        grid[xIndex][yIndex][zIndex].push_back(vertex);
-        // gridId.push_back({xIndex, yIndex, zIndex});
+        chunks[xIndex][yIndex][zIndex].push_back(vertex);
+        chunksId.push_back({xIndex, yIndex, zIndex});
     }
+
+    vector<Vec3> meanVertices;
+    vector<vector<vector<uint>>> meanVerticesId(resolution, vector<vector<uint>>(resolution, vector<uint>(resolution)));
+
+    // Compute a mean-point for each chunk, accordingly to the stored vertices in that chunk
+    for (uint x = 0; x < resolution; x++) {
+        for (uint y = 0; y < resolution; y++) {
+            for (uint z = 0; z < resolution; z++) {
+                uint nbOfVertices = chunks[x][y][z].size();
+                if (nbOfVertices == 0) {
+                    meanVerticesId[x][y][z] = -1;
+                    continue;
+                }
+
+                Vec3 meanVertex = Vec3(0, 0, 0);
+                for (auto &vertex : chunks[x][y][z]) {
+                    meanVertex += vertex;
+                }
+                meanVertex /= nbOfVertices;
+
+                meanVerticesId[x][y][z] = meanVertices.size();
+                meanVertices.push_back(meanVertex);
+            }
+        }
+    }
+
+    chunks.clear();
+    
+    vector<Triangle> newTriangles;
+
+    // Remap triangles' vertices indexes
+    for (auto &triangle : mesh.triangles) {
+        int triangleMeanVerticesId[3] = {-1, -1, -1};
+        for (int i = 0; i < 3; i++) {
+            uint triangleVertexId = triangle.v[i];
+            
+            uint x = chunksId[triangleVertexId][0];
+            uint y = chunksId[triangleVertexId][1];
+            uint z = chunksId[triangleVertexId][2];
+
+            triangleMeanVerticesId[i] = meanVerticesId[x][y][z];
+        }
+
+        bool isValid = true;
+        for (int i = 0; i < 3; i++) {
+            if (triangleMeanVerticesId[i] == triangleMeanVerticesId[(i + 1) % 3]) {
+                isValid = false;
+            }
+        }
+
+        if (isValid) {
+            newTriangles.push_back(Triangle(triangleMeanVerticesId[0], triangleMeanVerticesId[1], triangleMeanVerticesId[2]));
+        }
+    }
+
+    displayMesh.vertices = meanVertices;
+    displayMesh.triangles = newTriangles;
+    displayMesh.computeNormals();
+
+    cout << "Vertices: " << displayMesh.vertices.size() << "/" << mesh.vertices.size() << endl;
+    cout << "Normals: " << displayMesh.normals.size() << "/" << mesh.normals.size() << endl;
+    cout << "Triangles: " << displayMesh.triangles.size() << "/" << mesh.triangles.size() << endl;
 }
 
 // ------------------------------------
